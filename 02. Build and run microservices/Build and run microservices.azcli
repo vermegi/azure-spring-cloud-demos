@@ -1,0 +1,10 @@
+# Refer to 01 Getting started to create Azure Spring Cloud Service
+# We will start from https://docs.microsoft.com/en-us/azure/spring-cloud/quickstart-setup-config-server?tabs=Azure-CLI&pivots=programming-language-java
+
+az spring-cloud config-server git set -n $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --uri https://github.com/Azure-Samples/piggymetrics-config
+
+# get piggymetrics
+cd 02.\ Build\ and\ run\ microservices/ 
+git clone https://github.com/Azure-Samples/piggymetrics
+cd piggymetrics
+mvn clean package -DskipTests
