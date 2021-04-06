@@ -1,0 +1,51 @@
+# Create a Spring Cloud starter project 
+# navigate to the subdirectory holding this getting started file, download zip from here: 
+https://start.spring.io/#!type=maven-project&language=java&platformVersion=2.3.4.RELEASE&packaging=jar&javaVersion=1.8&groupId=com.example&artifactId=hellospring&name=hellospring&description=Demo%20project%20for%20Spring%20Boot&packageName=com.example.hellospring&dependencies=web,cloud-eureka,actuator,cloud-starter-sleuth,cloud-starter-zipkin,cloud-config-client 
+# OR execute at command line: 
+APPDIR=app
+curl https://start.spring.io/starter.tgz -d type=maven-project -d language=java -d baseDir=$APPDIR -d bootVersion=2.3.9 -d packaging=jar -d javaVersion=1.8 -d groupId=com.example -d artifactId=hellospring -d name=hellospring -d description=Demo%20project%20for%20Spring%20Boot -d packageName=com.example.hellospring -d dependencies=web,cloud-eureka,actuator,cloud-starter-sleuth,cloud-starter-zipkin,cloud-config-client | tar -xzvf -
+cd $APPDIR
+
+# Create HelloController.java at src/main/java/com/example/hellospring/HelloController.java
+package com.example.hellospring;
+
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RestController
+public class HelloController {
+
+	@RequestMapping("/")
+	public String index() {
+		return "Greetings from Azure Spring Cloud!";
+	}
+
+}
+
+# Log in to Azure 
+az login
+
+# Add Azure Spring Cloud Extension to az
+az extension add --name spring-cloud
+
+# Create ASC instance
+AZ_RESOURCE_GROUP=spring-cloud-demo
+AZ_SPRING_CLOUD_NAME=azure-spring-cloud-demo-gitte
+LOCATION=westeurope
+az group create -n $AZ_RESOURCE_GROUP -l $LOCATION
+az spring-cloud create \
+    -g "$AZ_RESOURCE_GROUP" \
+    -n "$AZ_SPRING_CLOUD_NAME" \
+    --enable-java-agent \
+    --sku standard
+
+# Configure defaults (If you do, you can ommit the -s and -g flags in the below statements)
+az configure --defaults group=$AZ_RESOURCE_GROUP
+az configure --defaults spring-cloud=$AZ_SPRING_CLOUD_NAME
+az configure --defaults location=$LOCATION
+
+# Build and deploy the app
+./mvnw clean package -DskipTests
+az spring-cloud app create -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --assign-endpoint true
+az spring-cloud app deploy -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --jar-path target/hellospring-0.0.1-SNAPSHOT.jar
+
