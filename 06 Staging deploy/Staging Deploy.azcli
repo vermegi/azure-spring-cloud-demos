@@ -1,0 +1,15 @@
+# Alter code in the 01 getting started app and build that
+cd 01\ getting\ started/app/
+
+mvn clean package -DskipTests
+
+az spring-cloud app deployment create -n green --app hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --jar-path target/hellospring-0.0.1-SNAPSHOT.jar
+
+# make green the production deployment
+az spring-cloud app set-deployment -d green --name hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP
+
+#rollback
+az spring-cloud app set-deployment -d default --name hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP
+
+#and delete
+az spring-cloud app deployment delete -n green --app hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP

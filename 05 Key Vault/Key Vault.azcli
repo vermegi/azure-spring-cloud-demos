@@ -1,0 +1,66 @@
+# create a key vault in the existing resource group
+KEYVAULT=gitte-asc-kv
+az keyvault create --name $KEYVAULT -g $AZ_RESOURCE_GROUP -l $LOCATION 
+
+VAULTURI=$(az keyvault show -n $KEYVAULT -g $AZ_RESOURCE_GROUP --query properties.vaultUri)
+
+az keyvault secret set --vault-name $KEYVAULT --name "connectionString" --value "jdbc:sqlserver://SERVER.database.windows.net:1433;database=DATABASE;"
+
+#Create app 
+az spring-cloud app create -n "springapp" -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --assign-endpoint true --assign-identity
+export SERVICE_IDENTITY=$(az spring-cloud app show --name "springapp" -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP | jq -r '.identity.principalId')
+
+# Create permissions for the app to KV
+az keyvault set-policy --name $KEYVAULT --object-id ${SERVICE_IDENTITY} --secret-permissions set get list
+
+# Get app
+curl https://start.spring.io/starter.tgz -d dependencies=web,azure-keyvault-secrets -d baseDir=springapp -d bootVersion=2.3.1.RELEASE -d javaVersion=1.8 | tar -xzvf -
+cd springapp
+# Edit src/main/resources/application.properties
+# azure.keyvault.enabled=true
+# azure.keyvault.uri=https://gitte-asc-kv.vault.azure.net
+
+# Update DemoApplication.java
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class DemoApplication implements CommandLineRunner {
+
+    @Value("${connectionString}")
+    private String connectionString;
+
+    public static void main(String[] args) {
+      SpringApplication.run(DemoApplication.class, args);
+    }
+
+    @GetMapping("get")
+    public String get() {
+      return connectionString;
+    }
+
+    public void run(String... varl) throws Exception {
+      System.out.println(String.format("\nConnection String stored in Azure Key Vault:\n%s\n",connectionString));
+    }
+  }
+
+# SKIP STEP Add Key Vault dependency to pom, dependency is already there 
+
+#<dependency>
+#    <groupId>com.microsoft.azure</groupId>
+#    <artifactId>azure-keyvault-secrets-spring-boot-starter</artifactId>
+#</dependency>
+
+# build and deploy
+mvn clean package -DskipTests
+az spring-cloud app deploy -n "springapp" -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+# check result
+curl https://azure-spring-cloud-demo-gitte-springapp.azuremicroservices.io/get
