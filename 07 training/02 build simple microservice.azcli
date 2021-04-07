@@ -1,0 +1,8 @@
+cd 07\ training/
+curl https://start.spring.io/starter.tgz -d dependencies=web -d baseDir=simple-microservice -d bootVersion=2.3.8 -d javaVersion=1.8 | tar -xzvf -
+
+cd simple-microservice
+mvn clean package -DskipTests
+
+az spring-cloud app create -n simple-microservice
+az spring-cloud app deploy -n simple-microservice --jar-path target/demo-0.0.1-SNAPSHOT.jar

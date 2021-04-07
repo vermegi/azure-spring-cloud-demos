@@ -1,0 +1,13 @@
+az login
+
+AZ_RESOURCE_GROUP=spring-cloud-demo
+AZ_SPRING_CLOUD_NAME=azure-spring-cloud-demo-gitte
+
+az spring-cloud create \
+    -g "$AZ_RESOURCE_GROUP" \
+    -n "$AZ_SPRING_CLOUD_NAME" \
+    --enable-java-agent \
+    --sku standard
+
+az configure --defaults group=$AZ_RESOURCE_GROUP
+az configure --defaults spring-cloud=$AZ_SPRING_CLOUD_NAME
