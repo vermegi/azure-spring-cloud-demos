@@ -1,0 +1,6 @@
+[submodule "02. Build and run microservices/piggymetrics"]
+	path = 02. Build and run microservices/piggymetrics
+	url = https://github.com/Azure-Samples/piggymetrics
+[submodule "03 Sample Applications/Azure-Spring-Cloud-Samples"]
+	path = 03 Sample Applications/Azure-Spring-Cloud-Samples
+	url = https://github.com/Azure-Samples/Azure-Spring-Cloud-Samples.git

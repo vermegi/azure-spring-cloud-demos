@@ -5,6 +5,27 @@ az spring-cloud config-server git set -n $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_G
 
 # get piggymetrics
 cd 02.\ Build\ and\ run\ microservices/ 
-git clone https://github.com/Azure-Samples/piggymetrics
+git submodule add https://github.com/Azure-Samples/piggymetrics
 cd piggymetrics
 mvn clean package -DskipTests
+
+#set defaults
+az configure --defaults group=$AZ_RESOURCE_GROUP
+az configure --defaults spring-cloud=$AZ_SPRING_CLOUD_NAME
+
+# create ASC apps
+az spring-cloud app create --name gateway
+az spring-cloud app create --name auth-service
+az spring-cloud app create --name account-service
+
+#deploy asc apps
+az spring-cloud app deploy -n gateway --jar-path ./gateway/target/gateway.jar
+az spring-cloud app deploy -n account-service --jar-path ./account-service/target/account-service.jar
+az spring-cloud app deploy -n auth-service --jar-path ./auth-service/target/auth-service.jar
+
+# create public endpoint for the gateway
+az spring-cloud app update -n gateway --assign-endpoint true
+az spring-cloud app show --name gateway --query properties.url
+
+# log streaming
+az spring-cloud app logs -n gateway -f
