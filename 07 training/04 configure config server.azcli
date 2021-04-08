@@ -1,1 +1,1 @@
-az spring-cloud config-server git repo add --repo-name vermegi/springconfig --uri https://github.com/vermegi/springconfig.git --username vermegi --password $ASCGITCONFIG 
+az spring-cloud config-server git repo add --name $AZ_SPRING_CLOUD_NAME --repo-name springconfig --uri https://github.com/vermegi/springconfig.git --username vermegi --password $ASCGITCONFIG 

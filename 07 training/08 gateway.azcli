@@ -1,0 +1,11 @@
+curl https://start.spring.io/starter.tgz -d dependencies=cloud-gateway,cloud-eureka,cloud-config-client -d baseDir=gateway -d bootVersion=2.3.8 -d javaVersion=1.8 | tar -xzvf -
+cd gateway
+
+az spring-cloud app create -n gateway2 --is-public true
+
+mvn clean package -DskipTests
+az spring-cloud app deploy -n gateway2 --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+curl https://azure-spring-cloud-demo-gitte-gateway2.azuremicroservices.io/CITY-SERVICE/cities
+curl https://azure-spring-cloud-demo-gitte-gateway2.azuremicroservices.io/WEATHER-SERVICE/weather/city?name=Paris%2C%20France
+

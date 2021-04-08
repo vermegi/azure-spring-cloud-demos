@@ -1,0 +1,22 @@
+cd  07\ training/
+curl https://start.spring.io/starter.tgz -d dependencies=web,cloud-eureka,cloud-config-client -d baseDir=spring-cloud-microservice -d bootVersion=2.3.8 -d javaVersion=1.8 | tar -xzvf -
+
+cd  spring-cloud-microservice
+mvn clean package -DskipTests
+
+mvn spring-boot:run
+
+curl http://localhost:8080/hello
+
+az spring-cloud app create -n spring-cloud-microservice
+
+az spring-cloud app deploy -n spring-cloud-microservice --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+az spring-cloud app logs --name spring-cloud-microservice -f
+
+
+AppPlatformLogsforSpring
+| where AppName == "spring-cloud-microservice"
+| project TimeGenerated, Log
+| order by TimeGenerated desc
+| limit 50

@@ -1,0 +1,44 @@
+az spring-cloud app create -n weather-service
+
+# Obtain the info on the MYSQL server in our resource group:
+MYSQL_INFO=$(az mysql server list --query '[0]')
+MYSQL_SERVERNAME=$(az mysql server list --query '[0].name' -o tsv)
+MYSQL_USERNAME="$(az mysql server list --query '[0].administratorLogin' -o tsv)@${MYSQL_SERVERNAME}"
+MYSQL_HOST="$(az mysql server list --query '[0].fullyQualifiedDomainName' -o tsv)"
+
+# Create a firewall rule to allow connections from your machine:
+MY_IP=$(curl whatismyip.akamai.com 2>/dev/null)
+az mysql server firewall-rule create \
+    --server-name $MYSQL_SERVERNAME \
+    --name "connect-from-lab" \
+    --start-ip-address "$MY_IP" \
+    --end-ip-address "$MY_IP"
+
+# Create a firewall rule to allow connections from Azure services:
+az mysql server firewall-rule create \
+    --server-name $MYSQL_SERVERNAME \
+    --name "connect-from-azure" \
+    --start-ip-address "0.0.0.0" \
+    --end-ip-address "0.0.0.0"
+
+# Create a MySQL database
+az mysql db create \
+    --name "azure-spring-cloud-training" \
+    --server-name $MYSQL_SERVERNAME
+
+# Display MySQL username (to be used in the next section)
+echo "Your MySQL username is: ${MYSQL_USERNAME}"
+
+MYSQL_ID=$(az mysql server show --name $MYSQL_SERVERNAME --query id -o tsv)
+
+az spring-cloud app binding mysql add --app weather-service --database-name azure-spring-cloud-training --key xxx --username $MYSQL_USERNAME --name weather-db --resource-id $MYSQL_ID
+
+curl https://start.spring.io/starter.tgz -d dependencies=web,data-jpa,mysql,cloud-eureka,cloud-config-client -d baseDir=weather-service -d bootVersion=2.3.8 -d javaVersion=1.8 | tar -xzvf -
+
+cd weather-service
+
+mvn clean package -DskipTests
+
+az spring-cloud app deploy -n weather-service --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+endpoint: /weather/city?name=Paris%2C%20France

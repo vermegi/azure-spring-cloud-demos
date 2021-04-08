@@ -1,0 +1,16 @@
+curl https://start.spring.io/starter.tgz -d dependencies=webflux,cloud-eureka,cloud-config-client -d baseDir=city-service -d bootVersion=2.3.8 -d javaVersion=1.8 | tar -xzvf -
+
+cd city-service
+
+az spring-cloud app create -n city-service
+
+COSMOS=$(az cosmosdb show -n sclabc-pfozkz5np5i22 --query id -o tsv)
+echo $COSMOS
+
+az spring-cloud app binding cosmos add --api-type sql --app city-service --name cosmosdb-city --resource-id $COSMOS --database-name azure-spring-cloud-cosmosdb 
+
+mvn clean package -DskipTests
+
+az spring-cloud app deploy -n city-service --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+endpoint: /cities
