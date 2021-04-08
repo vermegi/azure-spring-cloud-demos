@@ -1,0 +1,12 @@
+cd weather-service
+
+mvn clean package -DskipTests
+
+az spring-cloud app deployment create --name green --app weather-service --jar-path target/demo-0.0.1-SNAPSHOT.jar
+
+curl https://primary:4sTG00HWbE0FuIms9RiYcR9Ab2Clb5FAM5WU7vhBA4waXtgG9psMJEd7MhkqcF0o@azure-spring-cloud-demo-gitte.test.azuremicroservices.io/weather-service/green/weather/city?name=Paris%2C%20France
+
+az spring-cloud app set-deployment -n weather-service --deployment green
+az spring-cloud app set-deployment -n weather-service --deployment default
+
+az spring-cloud app deployment delete --name green --app weather-service
