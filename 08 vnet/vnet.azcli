@@ -1,0 +1,35 @@
+# set defaults
+AZ_RESOURCE_GROUP=spring-cloud-demo
+AZ_SPRING_CLOUD_NAME=azure-spring-cloud-demo-g-vnet
+LOCATION=westeurope
+
+# register resource providers
+az provider register --namespace Microsoft.AppPlatform
+az provider register --namespace Microsoft.ContainerService
+
+#create network requirements
+az group create -n $AZ_RESOURCE_GROUP -l $LOCATION
+az network vnet create -g $AZ_RESOURCE_GROUP -n ascvnet -l $LOCATION --address-prefix 10.1.0.0/16 --subnet-name service-runtime-subnet  --subnet-prefixes 10.1.0.0/28
+az network vnet subnet create -g $AZ_RESOURCE_GROUP --vnet-name ascvnet --address-prefixes 10.1.1.0/28 -n apps-subnet 
+
+# Grant permission on the vnet
+VIRTUAL_NETWORK_RESOURCE_ID=`az network vnet show \
+    --name ascvnet \
+    --resource-group $AZ_RESOURCE_GROUP \
+    --query "id" \
+    --output tsv`
+
+az role assignment create \
+    --role "Owner" \
+    --scope ${VIRTUAL_NETWORK_RESOURCE_ID} \
+    --assignee e8de9221-a19c-4c81-b814-fd37c6caf9d2
+
+# Create ASC vnet instance
+az spring-cloud create  \
+    -g "$AZ_RESOURCE_GROUP" \
+    -n "$AZ_SPRING_CLOUD_NAME" \
+    --vnet ascvnet \
+    --service-runtime-subnet service-runtime-subnet \
+    --app-subnet apps-subnet \
+    --enable-java-agent \
+    --sku standard
