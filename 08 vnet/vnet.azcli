@@ -33,3 +33,92 @@ az spring-cloud create  \
     --app-subnet apps-subnet \
     --enable-java-agent \
     --sku standard
+
+#configure defaults
+az configure --defaults group=$AZ_RESOURCE_GROUP
+az configure --defaults spring-cloud=$AZ_SPRING_CLOUD_NAME
+az configure --defaults location=$LOCATION
+
+# Build and deploy the app
+./mvnw clean package -DskipTests
+az spring-cloud app create -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --assign-endpoint true
+az spring-cloud app deploy -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --jar-path target/hellospring-0.0.1-SNAPSHOT.jar
+
+# stream logs
+az spring-cloud app logs -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --lines 100 -f
+
+# Create private DNS zone
+az network private-dns zone create -g $AZ_RESOURCE_GROUP \
+   -n private.azuremicroservices.io
+az network private-dns link vnet create -g $AZ_RESOURCE_GROUP -n azure-spring-cloud-dns-link \
+   -z private.azuremicroservices.io -v ascvnet -e false
+
+SPRING_CLOUD_RG=$AZ_RESOURCE_GROUP
+SPRING_CLOUD=$AZ_SPRING_CLOUD_NAME
+
+SERVICE_RUNTIME_RG=`az spring-cloud show -g $SPRING_CLOUD_RG -n $SPRING_CLOUD --query \
+"properties.networkProfile.serviceRuntimeNetworkResourceGroup" -o tsv`
+
+IP_ADDRESS=`az network lb frontend-ip list --lb-name kubernetes-internal -g \
+$SERVICE_RUNTIME_RG --query "[0].privateIpAddress" -o tsv`
+
+az network private-dns record-set a add-record \
+  -g $AZ_RESOURCE_GROUP \
+  -z private.azuremicroservices.io \
+  -n '*' \
+  -a $IP_ADDRESS
+
+
+# expose through app gw
+RESOURCE_GROUP=$AZ_RESOURCE_GROUP
+SPRING_APP_PRIVATE_FQDN='azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io'
+VIRTUAL_NETWORK_NAME='ascvnet'
+APPLICATION_GATEWAY_SUBNET_NAME='app-gw-subnet'
+APPLICATION_GATEWAY_SUBNET_CIDR='10.1.2.0/24'
+
+# create network resources
+APPLICATION_GATEWAY_PUBLIC_IP_NAME='app-gw-public-ip'
+az network vnet subnet create \
+    --name ${APPLICATION_GATEWAY_SUBNET_NAME} \
+    --resource-group ${RESOURCE_GROUP} \
+    --vnet-name ${VIRTUAL_NETWORK_NAME} \
+    --address-prefix ${APPLICATION_GATEWAY_SUBNET_CIDR}
+az network public-ip create \
+    --resource-group ${RESOURCE_GROUP} \
+    --location ${LOCATION} \
+    --name ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --allocation-method Static \
+    --sku Standard
+
+# create app gw
+APPLICATION_GATEWAY_NAME='asc-app-gw'
+az network application-gateway create \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP} \
+    --location ${LOCATION} \
+    --capacity 2 \
+    --sku Standard_v2 \
+    --http-settings-cookie-based-affinity Enabled \
+    --http-settings-port 443 \
+    --http-settings-protocol Https \
+    --public-ip-address ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --vnet-name ${VIRTUAL_NETWORK_NAME} \
+    --subnet ${APPLICATION_GATEWAY_SUBNET_NAME} \
+    --servers ${SPRING_APP_PRIVATE_FQDN}
+az network application-gateway http-settings update \
+    --gateway-name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP} \
+    --name appGatewayBackendHttpSettings \
+    --host-name-from-backend-pool true
+
+az network application-gateway show-backend-health \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP}
+
+az network public-ip show \
+    --resource-group ${RESOURCE_GROUP} \
+    --name ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --query [ipAddress] \
+    --output tsv
+
+
