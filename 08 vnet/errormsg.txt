@@ -1,0 +1,56 @@
+Exception in thread Thread-1:
+Traceback (most recent call last):
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connection.py", line 160, in _new_conn
+    (self._dns_host, self.port), self.timeout, **extra_kw
+  File "/opt/az/lib/python3.6/site-packages/urllib3/util/connection.py", line 61, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+  File "/opt/az/lib/python3.6/socket.py", line 745, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+socket.gaierror: [Errno -2] Name or service not known
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connectionpool.py", line 677, in urlopen
+    chunked=chunked,
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connectionpool.py", line 381, in _make_request
+    self._validate_conn(conn)
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connectionpool.py", line 976, in _validate_conn
+    conn.connect()
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connection.py", line 308, in connect
+    conn = self._new_conn()
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connection.py", line 172, in _new_conn
+    self, "Failed to establish a new connection: %s" % e
+urllib3.exceptions.NewConnectionError: <urllib3.connection.HTTPSConnection object at 0x7fef85fe49b0>: Failed to establish a new connection: [Errno -2] Name or service not known
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/az/lib/python3.6/site-packages/requests/adapters.py", line 449, in send
+    timeout=timeout
+  File "/opt/az/lib/python3.6/site-packages/urllib3/connectionpool.py", line 725, in urlopen
+    method, url, error=e, _pool=self, _stacktrace=sys.exc_info()[2]
+  File "/opt/az/lib/python3.6/site-packages/urllib3/util/retry.py", line 439, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='azure-spring-cloud-demo-g-vnet.private.azuremicroservices.io', port=443): Max retries exceeded with url: /api/logstream/apps/hellospring/instances/hellospring-default-11-5df646f54c-h68f9?tailLines=100&limitBytes=2097152&follow=True (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7fef85fe49b0>: Failed to establish a new connection: [Errno -2] Name or service not known',))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/az/lib/python3.6/threading.py", line 916, in _bootstrap_inner
+    self.run()
+  File "/opt/az/lib/python3.6/threading.py", line 864, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/vscode/.azure/cliextensions/spring-cloud/azext_spring_cloud/custom.py", line 1456, in _get_app_log
+    with requests.get(url, stream=True, auth=HTTPBasicAuth(user_name, password)) as response:
+  File "/opt/az/lib/python3.6/site-packages/requests/api.py", line 75, in get
+    return request('get', url, params=params, **kwargs)
+  File "/opt/az/lib/python3.6/site-packages/requests/api.py", line 60, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/opt/az/lib/python3.6/site-packages/requests/sessions.py", line 533, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/opt/az/lib/python3.6/site-packages/requests/sessions.py", line 646, in send
+    r = adapter.send(request, **kwargs)
+  File "/opt/az/lib/python3.6/site-packages/requests/adapters.py", line 516, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='azure-spring-cloud-demo-g-vnet.private.azuremicroservices.io', port=443): Max retries exceeded with url: /api/logstream/apps/hellospring/instances/hellospring-default-11-5df646f54c-h68f9?tailLines=100&limitBytes=2097152&follow=True (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7fef85fe49b0>: Failed to establish a new connection: [Errno -2] Name or service not known',))

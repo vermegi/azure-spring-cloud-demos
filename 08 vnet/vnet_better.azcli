@@ -101,10 +101,6 @@ SPRING_APP_PRIVATE_FQDN='azure-spring-cloud-demo-g-vnet-hellospring.private.azur
 VIRTUAL_NETWORK_NAME='ascvnet'
 APPLICATION_GATEWAY_SUBNET_NAME='app-gw-subnet'
 APPLICATION_GATEWAY_SUBNET_CIDR='10.1.3.0/24'
-# this you should NOT do
-APPLICATION_GATEWAY_REWRITE_SET_NAME='my-rewrite-set'
-APPLICATION_GATEWAY_REWRITE_RULE_NAME='remove-request-header'
-APPLICATION_GATEWAY_RULE_NAME='rule1'
 
 # create network resources
 APPLICATION_GATEWAY_PUBLIC_IP_NAME='app-gw-public-ip'
@@ -153,34 +149,13 @@ az network application-gateway create \
     --servers ${SPRING_APP_PRIVATE_FQDN}
 
 # This you should NOT do!
-az network application-gateway http-settings update \
-    --gateway-name ${APPLICATION_GATEWAY_NAME} \
-    --resource-group ${RESOURCE_GROUP} \
-    --name appGatewayBackendHttpSettings \
-    --host-name-from-backend-pool true
 
 az network application-gateway show-backend-health \
     --name ${APPLICATION_GATEWAY_NAME} \
     --resource-group ${RESOURCE_GROUP}
 
 # This you should NOT do!
-az network application-gateway rewrite-rule set create \
-    --gateway-name ${APPLICATION_GATEWAY_NAME} \
-    --resource-group ${RESOURCE_GROUP} \
-    --name ${APPLICATION_GATEWAY_REWRITE_SET_NAME}
 
-az network application-gateway rewrite-rule create \
-    --gateway-name ${APPLICATION_GATEWAY_NAME} \
-    --resource-group ${RESOURCE_GROUP} \
-    --rule-set-name ${APPLICATION_GATEWAY_REWRITE_SET_NAME} \
-    --name ${APPLICATION_GATEWAY_REWRITE_RULE_NAME} \
-    --request-headers X-Forwarded-Proto="https"
-
-az network application-gateway rule update \
-    --gateway-name ${APPLICATION_GATEWAY_NAME} \
-    --resource-group ${RESOURCE_GROUP} \
-    --name ${APPLICATION_GATEWAY_RULE_NAME} \
-    --rewrite-rule-set ${APPLICATION_GATEWAY_REWRITE_SET_NAME}
 
 az network public-ip show \
     --resource-group ${RESOURCE_GROUP} \
@@ -189,3 +164,38 @@ az network public-ip show \
     --output tsv
 
 curl http://20.73.163.100
+
+# Currently app is not accessible 
+
+# You don't want probing traffic, because Azure Spring Cloud has it's own load balancer. So probe traffic makes no sense here. If the Load Balancer would fail, app GW will take full Azure Spring Cloud out of rotation.
+az network application-gateway http-settings update --gateway-name ${APPLICATION_GATEWAY_NAME} -n appGatewayBackendHttpSettings --enable-probe false 
+
+
+# Create a custom domain. Can be done through app service domains: https://docs.microsoft.com/en-us/azure/app-service/manage-custom-dns-buy-domain 
+# Only execute the following once! 
+RGDOMAIN=donotdelete_customdomain
+az group create -n $RGDOMAIN -l $LOCATION
+az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --dryrun
+az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --accept-terms --auto-renew --privacy --debug
+
+az keyvault create -n kvdomain -l $LOCATION -g $RGDOMAIN 
+
+# might want to do this upload through portal 
+az keyvault certificate import --file ./wildcard_givermeims_com.pfx --name givermeimscert --vault-name kvdomain --password "yourpass"
+
+# Now we will use this certificate in application gateway. For this App GW needs to be able to read the cert from KV. 
+# 1. create user assigned MI
+# https://docs.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-manage-ua-identity-cli
+IDENTITYNAME=appgwID
+az identity create -g $AZ_RESOURCE_GROUP -n $IDENTITYNAME
+
+#assign this identity to the app gw
+az network application-gateway identity assign -g $AZ_RESOURCE_GROUP --gateway-name $APPLICATION_GATEWAY_NAME --identity /subscriptions/49e23c68-dee0-4c5b-8c21-74acea0a2662/resourceGroups/$AZ_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$IDENTITYNAME
+
+# get object ID of SP
+SPOBJECTID=$(az ad sp show --id fbecd51c-0f69-4117-92e6-3656677d96b1 --query objectId --out tsv)
+
+# grant this MI access to the kv secrets and certs
+az keyvault set-policy --name kvdomain -g $RGDOMAIN --object-id $SPOBJECTID --secret-permissions get list --certificate-permissions get list
+
+# create new app gw listener on 443 https using cert from kv
