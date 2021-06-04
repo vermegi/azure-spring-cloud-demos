@@ -157,11 +157,11 @@ az network application-gateway show-backend-health \
 # This you should NOT do!
 
 
-az network public-ip show \
+GATEWAYPUBLICIP=$(az network public-ip show \
     --resource-group ${RESOURCE_GROUP} \
     --name ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
     --query [ipAddress] \
-    --output tsv
+    --output tsv)
 
 curl http://20.73.163.100
 
@@ -178,10 +178,13 @@ az group create -n $RGDOMAIN -l $LOCATION
 az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --dryrun
 az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --accept-terms --auto-renew --privacy --debug
 
+# certificate walkthrough
 az keyvault create -n kvdomain -l $LOCATION -g $RGDOMAIN 
+VAULTURI=$(az keyvault show -n kvdomain -g $RGDOMAIN --query properties.vaultUri -o tsv)
 
 # might want to do this upload through portal 
-az keyvault certificate import --file ./wildcard_givermeims_com.pfx --name givermeimscert --vault-name kvdomain --password "yourpass"
+az keyvault certificate import --file ./server.pfx --name givermeimscert3 --vault-name kvdomain --password 'yourpass' 
+CERTID=$(az keyvault certificate show --name givermeimscert2 --vault-name kvdomain --query sid -o tsv)
 
 # Now we will use this certificate in application gateway. For this App GW needs to be able to read the cert from KV. 
 # 1. create user assigned MI
@@ -199,3 +202,84 @@ SPOBJECTID=$(az ad sp show --id fbecd51c-0f69-4117-92e6-3656677d96b1 --query obj
 az keyvault set-policy --name kvdomain -g $RGDOMAIN --object-id $SPOBJECTID --secret-permissions get list --certificate-permissions get list
 
 # create new app gw listener on 443 https using cert from kv
+az network application-gateway ssl-cert create --gateway-name $APPLICATION_GATEWAY_NAME --name sslcertfrontend --key-vault-secret-id $CERTID -g $AZ_RESOURCE_GROUP
+FRONTENDIPNAME=$(az network application-gateway frontend-ip list --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --query [0].name -o tsv)
+az network application-gateway frontend-port create --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --name sslport --port 443
+az network application-gateway http-listener create --frontend-port sslport --gateway-name $APPLICATION_GATEWAY_NAME --name appGatewayHttpsListener --frontend-ip $FRONTENDIPNAME -g $AZ_RESOURCE_GROUP --ssl-cert sslcertfrontend --host-name helloapp.givermeims.com
+
+# use httpslistener in the routing rule
+az network application-gateway rule update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --name rule1 --http-listener appGatewayHttpsListener
+
+# test whether app gw cert stuff works, by doing hostname override to private.microservices.io 
+az network application-gateway http-settings update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --host-name-from-backend-pool false --host-name azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io --name appGatewayBackendHttpSettings
+# this should now work
+curl https://helloapp.givermeims.com/
+
+# Add custom domain to spring cloud app 
+az keyvault set-policy -g $RGDOMAIN -n kvdomain  --object-id 938df8e2-2b9d-40b1-940c-c75c33494239 --certificate-permissions get list --secret-permissions get list
+az spring-cloud certificate add --name givermeicert3 --resource-group $AZ_RESOURCE_GROUP --vault-certificate-name givermeimscert3 --vault-uri $VAULTURI
+az spring-cloud app custom-domain bind --domain-name helloapp.givermeims.com --certificate givermeicert3 --app hellospring
+
+# revert previous setting 
+az network application-gateway http-settings update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --host-name-from-backend-pool false --host-name helloapp.givermeims.com --name appGatewayBackendHttpSettings
+
+# enforce https: 
+az spring-cloud app update -n hellospring --https-only
+
+# app GW backend health stays unhealthy. 
+az network application-gateway show-backend-health \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP}
+
+# Output: 
+# "healthProbeLog": "The root certificate of the server certificate used by the backend does not match the trusted root certificate added to the application gateway. Ensure that you add the correct root certificate to whitelist the backend",
+
+# {                                                                     
+#   "backendAddressPools": [
+#     {
+#       "backendAddressPool": {
+#         "backendAddresses": null,
+#         "backendIpConfigurations": null,
+#         "etag": null,
+#         "id": "/subscriptions/49e23c68-dee0-4c5b-8c21-74acea0a2662/resourceGroups/spring-cloud-demo/providers/Microsoft.Network/applicationGateways/asc-app-gw/backendAddressPools/appGatewayBackendPool",
+#         "name": null,
+#         "provisioningState": null,
+#         "resourceGroup": "spring-cloud-demo",
+#         "type": null
+#       },
+#       "backendHttpSettingsCollection": [
+#         {
+#           "backendHttpSettings": {
+#             "affinityCookieName": null,
+#             "authenticationCertificates": null,
+#             "connectionDraining": null,
+#             "cookieBasedAffinity": null,
+#             "etag": null,
+#             "hostName": null,
+#             "id": "/subscriptions/49e23c68-dee0-4c5b-8c21-74acea0a2662/resourceGroups/spring-cloud-demo/providers/Microsoft.Network/applicationGateways/asc-app-gw/backendHttpSettingsCollection/appGatewayBackendHttpSettings",
+#             "name": null,
+#             "path": null,
+#             "pickHostNameFromBackendAddress": null,
+#             "port": null,
+#             "probe": null,
+#             "probeEnabled": null,
+#             "protocol": null,
+#             "provisioningState": null,
+#             "requestTimeout": null,
+#             "resourceGroup": "spring-cloud-demo",
+#             "trustedRootCertificates": null,
+#             "type": null
+#           },
+#           "servers": [
+#             {
+#               "address": "azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io",
+#               "health": "Unhealthy",
+#               "healthProbeLog": "The root certificate of the server certificate used by the backend does not match the trusted root certificate added to the application gateway. Ensure that you add the correct root certificate to whitelist the backend",
+#               "ipConfiguration": null
+#             }
+#           ]
+#         }
+#       ]
+#     }
+#   ]
+# }

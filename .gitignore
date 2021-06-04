@@ -27,3 +27,4 @@ contactinfo.json
 
 # pfx
 wildcard_givermeims_com.pfx
+*.pfx
