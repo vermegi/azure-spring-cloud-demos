@@ -1,0 +1,248 @@
+# This walkthrough uses Azure docs for creating ASC in a VNet
+# first walkthrough: https://docs.microsoft.com/en-us/azure/spring-cloud/how-to-deploy-in-azure-virtual-network
+
+# log into Azure
+az login
+
+# set defaults
+AZ_RESOURCE_GROUP=spring-cloud-demo-vnet
+AZ_SPRING_CLOUD_NAME=azure-spring-cloud-demo-g-vnet
+LOCATION=westeurope
+
+# register resource providers
+az extension add --name spring-cloud
+az provider register --namespace Microsoft.AppPlatform
+az provider register --namespace Microsoft.ContainerService
+
+#create network requirements
+az group create -n $AZ_RESOURCE_GROUP -l $LOCATION
+az network vnet create -g $AZ_RESOURCE_GROUP -n ascvnet -l $LOCATION --address-prefix 10.1.0.0/16 --subnet-name service-runtime-subnet  --subnet-prefixes 10.1.0.0/28
+az network vnet subnet create -g $AZ_RESOURCE_GROUP --vnet-name ascvnet --address-prefixes 10.1.1.0/28 -n apps-subnet 
+
+# Grant permission on the vnet
+VIRTUAL_NETWORK_RESOURCE_ID=`az network vnet show \
+    --name ascvnet \
+    --resource-group $AZ_RESOURCE_GROUP \
+    --query "id" \
+    --output tsv`
+
+az role assignment create \
+    --role "Owner" \
+    --scope ${VIRTUAL_NETWORK_RESOURCE_ID} \
+    --assignee e8de9221-a19c-4c81-b814-fd37c6caf9d2
+
+# Create ASC vnet instance
+az spring-cloud create  \
+    -g "$AZ_RESOURCE_GROUP" \
+    -n "$AZ_SPRING_CLOUD_NAME" \
+    --vnet ascvnet \
+    --service-runtime-subnet service-runtime-subnet \
+    --app-subnet apps-subnet \
+    --enable-java-agent \
+    --sku standard \
+    -l $LOCATION
+
+# Deploy an app to spring cloud 
+# This comes from other docs: https://docs.microsoft.com/en-us/azure/spring-cloud/quickstart?tabs=Azure-CLI&pivots=programming-language-java 
+#configure defaults
+az configure --defaults group=$AZ_RESOURCE_GROUP
+az configure --defaults spring-cloud=$AZ_SPRING_CLOUD_NAME
+az configure --defaults location=$LOCATION
+
+# Build and deploy the app
+cd 01\ getting\ started/app
+./mvnw clean package -DskipTests
+az spring-cloud app create -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --assign-endpoint true
+az spring-cloud app deploy -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --jar-path target/hellospring-0.0.1-SNAPSHOT.jar
+
+# stream logs --> not working. Is this due to the private vnet? 
+# See errormsg.txt for error text
+az spring-cloud app logs -n hellospring -s $AZ_SPRING_CLOUD_NAME -g $AZ_RESOURCE_GROUP --lines 100 -f
+
+# create a VM in another vnet to access the application: https://docs.microsoft.com/en-us/azure/virtual-machines/windows/quick-create-cli
+# Create subnet for the VM
+az network vnet subnet create -g $AZ_RESOURCE_GROUP --vnet-name ascvnet --address-prefixes 10.1.2.0/28 -n jumpbox-subnet 
+
+az vm create --vnet-name ascvnet --subnet jumpbox-subnet --location $LOCATION \
+    --resource-group $AZ_RESOURCE_GROUP \
+    --name jumpbox \
+    --image win2019datacenter \
+    --admin-username givermei 
+
+# Not able to connect to the app --> need to create private DNS zone? 
+
+# Create private DNS zone
+# docs: https://docs.microsoft.com/en-us/azure/spring-cloud/access-app-virtual-network 
+az network private-dns zone create -g $AZ_RESOURCE_GROUP \
+   -n private.azuremicroservices.io
+az network private-dns link vnet create -g $AZ_RESOURCE_GROUP -n azure-spring-cloud-dns-link \
+   -z private.azuremicroservices.io -v ascvnet -e false
+
+SPRING_CLOUD_RG=$AZ_RESOURCE_GROUP
+SPRING_CLOUD=$AZ_SPRING_CLOUD_NAME
+
+SERVICE_RUNTIME_RG=`az spring-cloud show -g $SPRING_CLOUD_RG -n $SPRING_CLOUD --query \
+"properties.networkProfile.serviceRuntimeNetworkResourceGroup" -o tsv`
+
+IP_ADDRESS=`az network lb frontend-ip list --lb-name kubernetes-internal -g \
+$SERVICE_RUNTIME_RG --query "[0].privateIpAddress" -o tsv`
+
+az network private-dns record-set a add-record \
+  -g $AZ_RESOURCE_GROUP \
+  -z private.azuremicroservices.io \
+  -n '*' \
+  -a $IP_ADDRESS
+
+# Access app through https://azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io/#!/ --> mind the #! !!!!
+
+
+# expose through app gw
+RESOURCE_GROUP=$AZ_RESOURCE_GROUP
+SPRING_APP_PRIVATE_FQDN='azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io'
+VIRTUAL_NETWORK_NAME='ascvnet'
+APPLICATION_GATEWAY_SUBNET_NAME='app-gw-subnet'
+APPLICATION_GATEWAY_SUBNET_CIDR='10.1.3.0/24'
+
+# create network resources
+APPLICATION_GATEWAY_PUBLIC_IP_NAME='app-gw-public-ip'
+az network vnet subnet create \
+    --name ${APPLICATION_GATEWAY_SUBNET_NAME} \
+    --resource-group ${RESOURCE_GROUP} \
+    --vnet-name ${VIRTUAL_NETWORK_NAME} \
+    --address-prefix ${APPLICATION_GATEWAY_SUBNET_CIDR}
+az network public-ip create \
+    --resource-group ${RESOURCE_GROUP} \
+    --location ${LOCATION} \
+    --name ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --allocation-method Static \
+    --sku Standard
+
+# create app gw
+APPLICATION_GATEWAY_NAME='asc-app-gw'
+# From docs:
+# az network application-gateway create \
+#     --name ${APPLICATION_GATEWAY_NAME} \
+#     --resource-group ${RESOURCE_GROUP} \
+#     --location ${LOCATION} \
+#     --capacity 2 \
+#     --sku Standard_v2 \
+#     --http-settings-cookie-based-affinity Enabled \
+#     --http-settings-port 443 \
+#     --http-settings-protocol Https \
+#     --public-ip-address ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+#     --vnet-name ${VIRTUAL_NETWORK_NAME} \
+#     --subnet ${APPLICATION_GATEWAY_SUBNET_NAME} \
+#     --servers ${SPRING_APP_PRIVATE_FQDN}
+
+# Better (http-settings-cookie-based-affinity Disabled): 
+az network application-gateway create \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP} \
+    --location ${LOCATION} \
+    --capacity 2 \
+    --sku Standard_v2 \
+    --http-settings-cookie-based-affinity Disabled \
+    --http-settings-port 443 \
+    --http-settings-protocol Https \
+    --public-ip-address ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --vnet-name ${VIRTUAL_NETWORK_NAME} \
+    --subnet ${APPLICATION_GATEWAY_SUBNET_NAME} \
+    --servers ${SPRING_APP_PRIVATE_FQDN} 
+
+# check the backend health: 
+az network application-gateway show-backend-health \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP}
+# Currently backend is unhealthy: 
+# "healthProbeLog": "The Common Name (CN) of the backend server certificate does not match the host header entered in the health probe configuration (v2 SKU) or the FQDN in the backend pool (v1 SKU). Verify if the hostname matches with the CN of the backend server certificate. To learn more visit - https://aka.ms/backendcertcnmismatch.",
+
+GATEWAYPUBLICIP=$(az network public-ip show \
+    --resource-group ${RESOURCE_GROUP} \
+    --name ${APPLICATION_GATEWAY_PUBLIC_IP_NAME} \
+    --query [ipAddress] \
+    --output tsv)
+
+curl http://20.71.196.26
+# Bad Gateway
+# Currently app is not accessible 
+
+# You don't want probing traffic, because Azure Spring Cloud has it's own load balancer. So probe traffic makes no sense here. If the Load Balancer would fail, app GW will take full Azure Spring Cloud out of rotation.
+# This statement is setting custom probe to 'no'
+az network application-gateway http-settings update --gateway-name ${APPLICATION_GATEWAY_NAME} -n appGatewayBackendHttpSettings --enable-probe false 
+
+# Create a custom domain. Can be done through app service domains: https://docs.microsoft.com/en-us/azure/app-service/manage-custom-dns-buy-domain 
+# Only execute the following once! 
+RGDOMAIN=donotdelete_customdomain
+az group create -n $RGDOMAIN -l $LOCATION
+az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --dryrun
+az appservice domain create -g $RGDOMAIN --hostname givermeims.com --contact-info=@'./contactinfo.json' --accept-terms --auto-renew --privacy --debug
+
+# certificate walkthrough
+az keyvault create -n kvdomain -l $LOCATION -g $RGDOMAIN 
+VAULTURI=$(az keyvault show -n kvdomain -g $RGDOMAIN --query properties.vaultUri -o tsv)
+
+# might want to do this upload through portal 
+az keyvault certificate import --file ./server.pfx --name givermeimscert3 --vault-name kvdomain --password 'yourpass' 
+CERTID=$(az keyvault certificate show --name givermeimscert2 --vault-name kvdomain --query sid -o tsv)
+
+# Now we will use this certificate in application gateway. For this App GW needs to be able to read the cert from KV. 
+# 1. create user assigned MI
+# https://docs.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-manage-ua-identity-cli
+IDENTITYNAME=appgwID
+az identity create -g $AZ_RESOURCE_GROUP -n $IDENTITYNAME
+
+#assign this identity to the app gw
+az network application-gateway identity assign -g $AZ_RESOURCE_GROUP --gateway-name $APPLICATION_GATEWAY_NAME --identity /subscriptions/49e23c68-dee0-4c5b-8c21-74acea0a2662/resourceGroups/$AZ_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$IDENTITYNAME
+
+# get object ID of SP --> Do this based on the clientId 
+SPOBJECTID=$(az ad sp show --id 41ac27a1-c659-4888-8b6b-648e7c3c0728 --query objectId --out tsv)
+
+# grant this MI access to the kv secrets and certs
+az keyvault set-policy --name kvdomain -g $RGDOMAIN --object-id $SPOBJECTID --secret-permissions get list --certificate-permissions get list
+
+# create new app gw listener on 443 https using cert from kv
+az network application-gateway ssl-cert create --gateway-name $APPLICATION_GATEWAY_NAME --name sslcertfrontend --key-vault-secret-id $CERTID -g $AZ_RESOURCE_GROUP
+FRONTENDIPNAME=$(az network application-gateway frontend-ip list --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --query [0].name -o tsv)
+az network application-gateway frontend-port create --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --name sslport --port 443
+az network application-gateway http-listener create --frontend-port sslport --gateway-name $APPLICATION_GATEWAY_NAME --name appGatewayHttpsListener --frontend-ip $FRONTENDIPNAME -g $AZ_RESOURCE_GROUP --ssl-cert sslcertfrontend --host-name helloapp.givermeims.com
+
+# use httpslistener in the routing rule
+az network application-gateway rule update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --name rule1 --http-listener appGatewayHttpsListener
+
+# test whether app gw cert stuff works, by doing hostname override to private.microservices.io 
+az network application-gateway http-settings update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --host-name-from-backend-pool false --host-name azure-spring-cloud-demo-g-vnet-hellospring.private.azuremicroservices.io --name appGatewayBackendHttpSettings
+# this should now work
+curl https://helloapp.givermeims.com/
+# however, this does not work yet ... timeout? 
+# spring cloud also needs the cert and custom domain
+
+# Add custom domain to spring cloud app 
+az keyvault set-policy -g $RGDOMAIN -n kvdomain  --object-id 938df8e2-2b9d-40b1-940c-c75c33494239 --certificate-permissions get list --secret-permissions get list
+az spring-cloud certificate add --name givermeicert2 --resource-group $AZ_RESOURCE_GROUP --vault-certificate-name givermeimscert2 --vault-uri $VAULTURI
+az spring-cloud app custom-domain bind --domain-name helloapp.givermeims.com --certificate givermeicert2 --app hellospring
+
+# check the backend health: 
+az network application-gateway show-backend-health \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP}
+# this is now healthy
+# however, we can still not reach the app
+curl https://helloapp.givermeims.com/
+
+# revert previous setting 
+az network application-gateway http-settings update --gateway-name $APPLICATION_GATEWAY_NAME -g $AZ_RESOURCE_GROUP --host-name-from-backend-pool false --host-name helloapp.givermeims.com --name appGatewayBackendHttpSettings
+
+# enforce https: 
+az spring-cloud app update -n hellospring --https-only
+
+# app GW backend health stays healthy. 
+az network application-gateway show-backend-health \
+    --name ${APPLICATION_GATEWAY_NAME} \
+    --resource-group ${RESOURCE_GROUP}
+
+#Edit host file with app gw IP: 
+# 20.71.196.26 helloapp.givermeims.com
+curl https://helloapp.givermeims.com/
+
+#set up another app: 
+
