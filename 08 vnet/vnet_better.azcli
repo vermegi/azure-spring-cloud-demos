@@ -5,7 +5,7 @@
 az login
 
 # set defaults
-AZ_RESOURCE_GROUP=spring-cloud-demo
+AZ_RESOURCE_GROUP=spring-cloud-demo-vnet
 AZ_SPRING_CLOUD_NAME=azure-spring-cloud-demo-g-vnet
 LOCATION=westeurope
 
